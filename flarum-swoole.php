@@ -2,8 +2,7 @@
 /**
  * Flarum Swoole Coroutine Worker
  *
- * 基于 Swoole 的 Flarum 常驻内存入口，启用了 SWOOLE_HOOK_ALL 使 PDO/MySQL
- * 查询自动协程化，从而真正发挥多核服务器的并发能力。
+ * 基于 Swoole 的 Flarum 常驻内存入口，
  *
  * 依赖安装:
  *   pecl install swoole
@@ -46,7 +45,6 @@ $port        = 2345;
 //   - 每个页面打开会同时发起 3~5 个 API 请求
 //   - 这 3~5 个请求如果能分配到不同的 Worker，就能在多个核心上真正并行
 //   - Worker 越多，每个 Worker 占的 L1/L2 Cache 越少（弱单核更在乎 Cache 命中率）
-//
 // 推荐值：页面并发API数量的 1.5~2 倍，即 6~8 个
 // 太少（<4）：3~5个并发请求排队等待
 // 太多（>16）：Cache 抖动，单核调度开销上升，反而更慢
@@ -140,16 +138,14 @@ $server->set([
 // ============================================================
 $server->on('workerStart', function (Server $server, int $workerId) {
     // ----------------------------------------------------------
-    // 绝对禁止开启 SWOOLE_HOOK_ALL！
+    // 现阶段暂时不能开启 SWOOLE_HOOK_ALL！
     // Flarum(Laravel) 的 Redis 和 MySQL 连接在框架底层是“单例”设计。
     // 如果开启 Hook，Swoole 会把底层的 stream 替换成协程 socket。
     // 当多个并发请求（多个协程）同时尝试读写同一个 Redis 单例时，
     // Swoole 就会直接抛出 Fatal Error：Socket has already been bound to another coroutine
-    // 这会导致整个 Worker 崩溃，连带你的 Flarum 也无法连接 Redis！
     // ----------------------------------------------------------
     // ----------------------------------------------------------
     // 内存配置：激进分配，应对偶发的大内存操作
-    //
     // 背景：Flarum 在管理员清除缓存后的首次访问时，会触发 LESS 编译、
     // JS 资产打包等操作，峰值内存需求可高达 ~1GB。
     // 正常请求（ORM 水合 + JSON 序列化）仅需 20~60MB，这部分上限
@@ -278,19 +274,15 @@ $server->on('workerStart', function (Server $server, int $workerId) {
     });
     // ----------------------------------------------------------
     // 定时 Worker 轮换（解决堆碎片化慢性退化）
-    //
     // 背景：PHP 的 Zend 内存分配器在 GC 回收对象后，被释放的内存只是
     // 原地留下"空洞"，无法被压缩整理。Worker 运行 6~8 小时后，堆里
     // 布满细碎空洞，CPU 寻址的 L1/L2 Cache 命中率持续下滑，
-    // 表现为"睡一觉回来就慢了一倍"。
-    //
-    // 解决方案：每个 Worker 每 6 小时（各自错开启动时间）主动退出一次。
+    // 解决方案：每个 Worker 每 0.2 小时（各自错开启动时间）主动退出一次。
     // Swoole Manager 会在毫秒内拉起全新干净的替补 Worker，
     // 整个过程对用户完全透明（在线用户的请求会被其他 Worker 接管）。
-    //
     // 各 Worker 错开时间：避免 8 个 Worker 同时重启导致的短暂容量下降。
     // ----------------------------------------------------------
-    $recycleInterval = 6 * 3600 * 1000;  // 6 小时
+    $recycleInterval = 0.2 * 3600 * 1000;  // 6 小时
     $recycleOffset   = $workerId * 45 * 1000;  // 每个 Worker 错开 45 秒
     \Swoole\Timer::after($recycleOffset, function () use ($server, $workerId, $recycleInterval) {
         \Swoole\Timer::tick($recycleInterval, function () use ($server, $workerId) {
