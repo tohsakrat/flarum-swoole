@@ -1,4 +1,10 @@
-安装swoole后，把flarum-swoole放在flarum根目录（和vendor文件夹平级）
+安装swoole
+```
+pecl install swoole
+```
+flarum1.x运行环境~~历史悠久~~我也没在别的版本测试过，自用php8.5+swoole6.2。
+
+把flarum-swoole放在flarum根目录（和vendor文件夹平级）
 启动
 ```
 php flarum-swoole.php start
@@ -6,7 +12,9 @@ php flarum-swoole.php start
 
 如果成功，swoole会运行在2345端口，在nginx等网关配置反代即可。
 
-如果有fof/redis和litespeed cache插件，这个脚本可以读取redis设置，代替litespeed网关做缓存。比真正的litespeed好一点是可以在入口就去redis拿session，做颗粒度更细的缓存策略。
+如果有fof/redis和litespeed cache插件，这个脚本可以读取redis设置，代替litespeed网关做缓存。
+
+比真正的litespeed好一点是可以在入口就去redis拿session，做颗粒度更细的缓存策略。
 
 ~~没在没装fof/redis的环境下测试过，不能跑别来找我。~~
 
@@ -14,18 +22,18 @@ php flarum-swoole.php start
 
 lsphp和swoole互斥，不为了lsphp的性能提升，没必要专门为了缓存把网关换成litespeed，毕竟免费版open litespeed网关限制是真多。
 
-提升其实不算很大，单次请求也就快一百毫秒左右，没开启Hook所以其实对并发的提升不大，主要是为了加热容器。
+提升其实不算很大，单次请求也就快一百毫秒左右，没开启Hook所以其实对并发的提升也不大，swoole的主要作用是加热容器。
 
 配合使用的场景是，降低每次请求的数据量，比如调低每一页的贴数，拆分原本重型的请求，让用户不用等容器启动的时间，直接拿到刚组装出来的几个帖子内容。
 
 因为swoole节省了容器启动的部分时间，小型请求的初始水位降低，用户就能得到几乎及时的反馈。
 
-对于flarum真正的性能问题，n+1查询和串行等待，其实是帮不上忙。
+对于flarum真正的性能问题，大量的n+1查询和串行等待，其实是帮不上忙，该慢还是慢。
 
-重要的还是让减轻单次请求的业务成为可能，靠请求频率让用户体感快一点。
+重要的还是配合拆分请求，减轻单次请求的业务成为可能，靠降低首字节返回和提高请求频率让用户体感快一点。
 
 
 ```
 觉得flarum本身“很轻”，让用户等个一两秒也没关系的别用哈。
-类似的思路两年前就有人搞出来了，人家不想分享还不是被你们喷走的。
+类似的思路两年前就有人搞出来了，人家在群里提了句就被你们追着喷，现在能用的插件越来越少是flarum应得的。
 ```
