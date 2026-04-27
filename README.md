@@ -1,9 +1,9 @@
-安装swoole后，放在flarum根目录（和vendor文件夹平级）
+安装swoole后，把flarum-swoole放在flarum根目录（和vendor文件夹平级）
 启动
 ```
 php flarum-swoole.php start
 ```
-如果有fof/redis和litespeed cache插件，本身可以代替litespeed网关做缓存。
+如果有fof/redis和litespeed cache插件，这个脚本可以读取redis设置，代替litespeed网关做缓存。
 
 lsphp和swoole互斥，不为了lsphp的性能提升，没必要专门为了缓存把网关换成litespeed，毕竟open litespeed网关真的难用。
 
