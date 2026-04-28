@@ -39,9 +39,10 @@ use Psr\Http\Message\ResponseInterface as PsrResponse;
 // ============================================================
 // 服务器配置
 // ============================================================
-$host        = '0.0.0.0';
-$port        = 2345;
-
+//$host        = '0.0.0.0';
+$host = '/tmp/flarum.sock';
+//$port        = 2345;
+$port        = 0;
 // ---------------------------------------------------------------
 // Worker 数量策略（针对弱单核 + 3~5个并发API请求/页面 的场景）
 // ---------------------------------------------------------------
@@ -86,7 +87,8 @@ if ($action === 'reload') {
 // ---------------------------------------------------------------
 // SWOOLE_BASE 模式：无 Master→Worker IPC 开销，适合低延迟场景
 // ---------------------------------------------------------------
-$server = new Server($host, $port, SWOOLE_BASE, SWOOLE_SOCK_TCP);
+//$server = new Server($host, $port, SWOOLE_BASE, SWOOLE_SOCK_TCP);
+$server = new Server($host, 0,  SWOOLE_BASE, SWOOLE_SOCK_UNIX_STREAM);
 
 $server->set([
     'worker_num'            => $workerCount,
@@ -94,8 +96,9 @@ $server->set([
     'max_request'           => 0,
     'reload_async'          => true,
     'max_wait_time'         => 60,
-    'enable_reuse_port'     => true,
+    'enable_reuse_port'     => false,
     'http_compression'      => false,
+    'enable_coroutine' => false, // 彻底关闭请求级的自动协程
     
     // TCP 层延迟优化（禁用 Nagle 算法，确保 JSON 响应低延迟）
     'open_tcp_nodelay'      => true,
@@ -244,8 +247,8 @@ $server->on('workerStart', function (Server $server, int $workerId) {
     // ----------------------------------------------------------
     // 定时 Worker 轮换（解决堆碎片化慢性退化）
     // ----------------------------------------------------------
-    $recycleInterval = 1 * 3600 * 1000;  // 1 小时
-    $recycleOffset   = $workerId * 45 * 1000;  // 错开 45 秒
+    $recycleInterval = (int)(1 * 3600 * 1000);  // 1 小时
+    $recycleOffset   = $workerId * 60 * 1000;  // 错开 60 秒
     \Swoole\Timer::after($recycleOffset, function () use ($server, $workerId, $recycleInterval) {
         \Swoole\Timer::tick($recycleInterval, function () use ($server, $workerId) {
             echo "[Worker #{$workerId}] [" . date('H:i:s') . "] 定时清理碎片，Worker 退出中...\n";
@@ -613,6 +616,20 @@ function logRequest(SwooleRequest $req, int $statusCode, float $durationSec): vo
     echo "[{$time}] [W#{$workerId}] {$ip} \"{$method} {$fullUri}\" {$statusCode} {$durationMs}ms\n";
 }
 
+
+
+
+// ============================================================
+// 主进程启动事件（修改 Socket 权限）
+// ============================================================
+$server->on('start', function ($server) use ($host) {
+    // 确保是 Unix Socket 路径且文件存在时，将其权限强行改为 777
+    if (str_starts_with($host, '/') && file_exists($host)) {
+        chmod($host, 0777);
+        echo "Socket 权限已自动修改为 777\n";
+    }
+});
+
 // ============================================================
 // 启动服务器
 // ============================================================
@@ -620,5 +637,7 @@ echo "Flarum Swoole Worker 启动中...\n";
 echo "监听地址: http://{$host}:{$port}\n";
 echo "Worker 数量: {$workerCount}\n";
 echo "---\n";
+
+
 
 $server->start();
