@@ -36,7 +36,7 @@ done
 rm -f /tmp/flarum.sock /tmp/flarum-swoole.pid
 
 # 4. 切换用户并执行最终启动
-exec su -c 'cd /www/wwwroot/klezik-insi.de/flarum && php flarum-swoole.php start'
+exec su -c 'cd /xxx/flarum && php flarum-swoole.php start'
 ```
 
 
