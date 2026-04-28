@@ -40,9 +40,9 @@ exec su -c 'cd /www/wwwroot/klezik-insi.de/flarum && php flarum-swoole.php start
 ```
 
 
-如果有fof/redis和litespeed cache插件，这个脚本可以读取redis设置，代替litespeed网关做缓存。~~不过还没做~~
+如果有fof/redis和litespeed cache插件，这个脚本可以读取redis设置，代替litespeed网关做缓存。
 
-比真正的litespeed好一点是可以在入口就去redis拿session，做颗粒度更细的缓存策略。
+比真正的litespeed好一点是可以在入口就去redis拿session，做颗粒度更细的缓存策略。~~不过还没做~~
 
 ~~没在没装fof/redis的环境下测试过，不能跑别来找我。~~
 
