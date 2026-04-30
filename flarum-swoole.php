@@ -111,6 +111,9 @@ $server->set([
     'buffer_output_size'    => 16 * 1024 * 1024,
     'socket_buffer_size'    => 512 * 1024,
     
+    // 设置最大数据包为 50MB (单位: 字节)
+    'package_max_length' => 50 * 1024 * 1024,
+    
     // 协程调度参数
     'max_coroutine'         => 10000,
     'stack_size'            => 8 * 1024 * 1024,
@@ -247,8 +250,8 @@ $server->on('workerStart', function (Server $server, int $workerId) {
     // ----------------------------------------------------------
     // 定时 Worker 轮换（解决堆碎片化慢性退化）
     // ----------------------------------------------------------
-    $recycleInterval = (int)(1 * 3600 * 1000);  // 1 小时
-    $recycleOffset   = $workerId * 60 * 1000;  // 错开 60 秒
+    $recycleInterval = (int)(0.5 * 3600 * 1000);  // 6 小时
+    $recycleOffset   = $workerId * 180 * 1000;  // 错开 180 秒
     \Swoole\Timer::after($recycleOffset, function () use ($server, $workerId, $recycleInterval) {
         \Swoole\Timer::tick($recycleInterval, function () use ($server, $workerId) {
             echo "[Worker #{$workerId}] [" . date('H:i:s') . "] 定时清理碎片，Worker 退出中...\n";
@@ -467,12 +470,12 @@ $server->on('request', function (SwooleRequest $swooleReq, SwooleResponse $swool
     }
 
     // ----------------------------------------------------------
-    // [健康检查] 内存水位监控 (已提至 256MB)
+    // [健康检查] 内存水位监控 
     // ----------------------------------------------------------
     if (memory_get_usage() > 256 * 1024 * 1024) {
-        echo "[Worker #{$GLOBALS['flarum_worker_id']}] 内存超过 256MB，触发平滑重启...\n";
+        echo "[Worker #{$GLOBALS['flarum_worker_id']}] 内存超过 128MB，触发平滑重启...\n";
         if ($server instanceof \Swoole\Server) {
-            \Swoole\Coroutine\System::sleep(0.1);
+           // \Swoole\Coroutine\System::sleep(0.1);
             $server->stop($GLOBALS['flarum_worker_id']);
         }
     }
@@ -548,7 +551,8 @@ function buildPsr7Request(SwooleRequest $req): ServerRequest
         $stream,
         $psrHeaders,
         $cookies,
-        $queryParams
+        $queryParams,
+        $req->post ?? null
     );
 }
 
