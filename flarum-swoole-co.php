@@ -56,34 +56,46 @@ exit(1);
 
 $composerLoader = require __DIR__ . '/vendor/autoload.php';
 
-// 协程并发序列化引擎：直接定义 Collection 类，不依赖原文件内容
+// 协程并发序列化引擎：并发化 Collection::toArray()（真正的计算瓶颈）
+// toArray() 内每个 resource->toArray() 调用 serializer->getAttributes/getRelationships，
+// 这才是耗 CPU / 触发 DB 的地方；getResources() 只是返回已有对象，不需要改。
 if (COROUTINE_SERIALIZER_ENABLED) {
-    // 强制通过 autoloader 加载父类（class_exists 第二参数 true = 触发 autoload）
-    class_exists('Tobscure\JsonApi\Element', true);
+    $collectionFile = $composerLoader->findFile('Tobscure\JsonApi\Collection');
+    if (!$collectionFile || !file_exists($collectionFile)) {
+        echo "[WARNING] 无法定位 Tobscure\\JsonApi\\Collection，跳过协程序列化注入。\n";
+    } elseif (class_exists('Tobscure\JsonApi\Collection', false)) {
+        echo "[Boot] Tobscure\\JsonApi\\Collection 已被提前加载，跳过注入。\n";
+    } else {
+        $src = file_get_contents($collectionFile);
 
-    if (!class_exists('Tobscure\JsonApi\Element', false)) {
-        echo "[WARNING] 无法加载 Tobscure\\JsonApi\\Element，跳过协程序列化注入。\n";
-    } elseif (!class_exists('Tobscure\JsonApi\Collection', false)) {
-        eval('namespace Tobscure\JsonApi;
-class Collection extends Element
-{
-    public function getResources()
+        // 定位并替换 toArray()（协程并行化每个 resource->toArray()）
+        if (preg_match('/public\s+function\s+toArray\s*\(\s*\)[^{]*\{/', $src, $m, PREG_OFFSET_CAPTURE)) {
+            $sigEnd    = $m[0][1] + strlen($m[0][0]);
+            $depth     = 1;
+            $pos       = $sigEnd;
+            $len       = strlen($src);
+            while ($pos < $len && $depth > 0) {
+                if ($src[$pos] === '{') $depth++;
+                elseif ($src[$pos] === '}') $depth--;
+                $pos++;
+            }
+            $lineStart = strrpos(substr($src, 0, $m[0][1]), "\n");
+
+            $newMethod = '
+    public function toArray()
     {
-        $data = is_iterable($this->data) ? $this->data : [];
-        if (is_countable($data) && count($data) > 0 && \Swoole\Coroutine::getCid() > 0) {
-            $wg      = new \Swoole\Coroutine\WaitGroup();
-            $results = [];
-            $i       = 0;
+        // 协程环境 + 多条目时并行计算每个 resource->toArray()
+        if (\Swoole\Coroutine::getCid() > 0 && count($this->resources) > 1) {
+            $wg         = new \Swoole\Coroutine\WaitGroup();
+            $results    = [];
             $parentCtx  = \Swoole\Coroutine::getContext();
             $viewShared = $parentCtx["view_shared"] ?? [];
-            $serializer = $this->serializer;
-            foreach ($data as $model) {
-                $idx = $i++;
+            foreach ($this->resources as $idx => $resource) {
                 $wg->add();
-                \Swoole\Coroutine\go(function () use ($wg, $model, $idx, &$results, $viewShared, $serializer) {
+                \Swoole\Coroutine\go(function () use ($wg, $resource, $idx, &$results, $viewShared) {
                     $ctx = \Swoole\Coroutine::getContext();
                     $ctx["view_shared"] = $viewShared;
-                    try   { $results[$idx] = $serializer->serialize($model); }
+                    try   { $results[$idx] = $resource->toArray(); }
                     finally { $wg->done(); }
                 });
             }
@@ -91,16 +103,24 @@ class Collection extends Element
             ksort($results);
             return array_values($results);
         }
-        $resources = [];
-        foreach ($data as $model) {
-            $resources[] = $this->serializer->serialize($model);
+        // 非协程或单条目时串行降级
+        return array_map(function ($resource) {
+            return $resource->toArray();
+        }, $this->resources);
+    }';
+
+            $patched = substr($src, 0, $lineStart + 1) . $newMethod . "\n" . substr($src, $pos);
+        } else {
+            $patched = $src; // toArray() 不存在则不修改
         }
-        return $resources;
-    }
-}');
-        echo "[Boot] 协程序列化引擎注入成功。\n";
-    } else {
-        echo "[Boot] Tobscure\\JsonApi\\Collection 已被提前加载，跳过注入。\n";
+
+        $code = preg_replace('/^.*?<\?php\s*/is', '', $patched);
+        try {
+            eval($code);
+            echo "[Boot] 协程序列化引擎注入成功（toArray 并发版）。\n";
+        } catch (\Throwable $e) {
+            echo "[Boot] ⚠️ 协程序列化注入失败: " . $e->getMessage() . "\n";
+        }
     }
 }
 
