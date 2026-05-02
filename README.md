@@ -2,7 +2,7 @@ flarum的非侵入式swoole容器，做了以下几件事：
 1. di container常驻
 2，权限组常驻（需要配合插件或者直接在根目录extend.php写一下相关入口）
 3. n+1序列化协程并行（需要co版本）
-   
+4. 性能监控，开启后可以看看是什么插件在n+1
 flarum1.x运行环境~~历史悠久~~，运行环境多种多样，我也没在别的版本测试过，自用php8.5+swoole6.2。
 如果用开启协程版本，要1.8以上，Tobscure\JsonApi已经内置于flarum/core的。
 
