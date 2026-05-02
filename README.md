@@ -56,11 +56,13 @@ exec su -c 'cd /xxx/flarum && php flarum-swoole.php start'
 
 比真正的litespeed好一点是，在入口就去redis拿session，做颗粒度更细的缓存策略。
 
+lsphp和swoole互斥，不为了lsphp的性能提升，没必要专门为了缓存把网关换成litespeed，毕竟免费版open litespeed网关限制是真多。
+
 ~~做完才想起来都直接拿session了应该不再需要litespeed插件了，只是为了帖子界面级别缓存的颗粒度控制增加一个中间件不划算。但是现在还需要它~~
 
 ~~没在没装fof/redis的环境下测试过，不能跑别来找我。~~
 
-lsphp和swoole互斥，不为了lsphp的性能提升，没必要专门为了缓存把网关换成litespeed，毕竟免费版open litespeed网关限制是真多。
+
 
 # 权限组静态化
 
