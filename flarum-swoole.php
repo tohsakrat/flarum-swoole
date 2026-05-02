@@ -46,7 +46,7 @@ $port        = 0;
 // ---------------------------------------------------------------
 // Worker 数量策略（针对弱单核 + 3~5个并发API请求/页面 的场景）
 // ---------------------------------------------------------------
-$workerCount = 8;  // 建议值：6~10，根据实际延迟测试调整
+$workerCount = swoole_cpu_num();  // 建议值：6~10，根据实际延迟测试调整
 
 // ============================================================
 // CLI 参数处理（支持 start / stop / reload）
@@ -92,6 +92,7 @@ $server = new Server($host, 0,  SWOOLE_BASE, SWOOLE_SOCK_UNIX_STREAM);
 
 $server->set([
     'worker_num'            => $workerCount,
+    'open_cpu_affinity' => true, // 开启 CPU 亲和性设置
     'task_worker_num'       => 0,
     'max_request'           => 0,
     'reload_async'          => true,
@@ -141,6 +142,31 @@ $server->on('workerStart', function (Server $server, int $workerId) {
     try {
         $site = require __DIR__ . '/site.php';
         $app  = $site->bootApp();
+
+        // 预加载权限表到内存，消除第一批请求的竞态和 DB 查询
+        $gateClass = null;
+        if (class_exists('SwooleMemoryGate')) {
+            $gateClass = 'SwooleMemoryGate';
+        } else {
+            foreach (get_declared_classes() as $class) {
+                if (str_ends_with($class, 'SwooleMemoryGate')) {
+                    $gateClass = $class;
+                    break;
+                }
+            }
+        }
+
+        if ($gateClass && property_exists($gateClass, 'permissionsMap')) {
+            $map = [];
+            foreach (\Flarum\Group\Permission::get() as $p) {
+                $map[$p->group_id][] = $p->permission;
+            }
+            $gateClass::$permissionsMap = $map;
+            echo "[Worker #{$workerId}] {$gateClass} 权限表预加载完成。\n";
+        } else {
+            echo "[Worker #{$workerId}] ⚠️ 未找到 SwooleMemoryGate，跳过权限预加载。\n";
+        }
+
     } catch (\Throwable $e) {
         fwrite(STDERR, "[Worker #{$workerId}] Flarum 启动失败: {$e->getMessage()}\n");
         fwrite(STDERR, $e->getTraceAsString() . "\n");
@@ -151,6 +177,22 @@ $server->on('workerStart', function (Server $server, int $workerId) {
     $GLOBALS['flarum_handler']   = $app->getRequestHandler();
     $GLOBALS['flarum_container'] = $app->getContainer();
     $GLOBALS['flarum_worker_id'] = $workerId;
+
+    // ----------------------------------------------------------
+    // 提前预热 Flarum 引擎，消除首个真实请求的冷启动开销
+    // ----------------------------------------------------------
+    try {
+        $warmupUri = new \Laminas\Diactoros\Uri('http://localhost/api/discussions');
+        $warmupRequest = new \Laminas\Diactoros\ServerRequest(
+            [], [], $warmupUri, 'GET', 'php://temp',
+            ['Accept' => ['application/json']]
+        );
+        // 模拟一个请求强制 Flarum 完整走一遍启动、路由编译、服务解析的过程
+        $GLOBALS['flarum_handler']->handle($warmupRequest);
+        echo "[Worker #{$workerId}] Flarum 引擎预热完毕 (冷启动已消除)。\n";
+    } catch (\Throwable $e) {
+        echo "[Worker #{$workerId}] ⚠️ 预热遇到错误(通常可忽略): {$e->getMessage()}\n";
+    }
 
     // ----------------------------------------------------------
     // LSCache 兼容层：Redis 连接配置 (动态从 extend.php 读取)
