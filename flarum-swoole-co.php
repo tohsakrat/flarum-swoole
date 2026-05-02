@@ -21,7 +21,7 @@ const SWOOLE_WORKER_COUNT = 8;
 const PHP_MEMORY_LIMIT = '1536M';
 
 /** 单 Worker 内存水位（超过后平滑重启以清理堆碎片，单位：字节） */
-const WORKER_MEMORY_WATERMARK = 256 * 1024 * 1024; // 256 MB
+const WORKER_MEMORY_WATERMARK = 128 * 1024 * 1024; // 256 MB
 
 /** Worker 定时轮换间隔（防止长期运行内存碎片化，单位：小时） */
 const WORKER_RECYCLE_HOURS = 0.5;
@@ -523,7 +523,8 @@ $server->set([
 
 'open_cpu_affinity' => true, // 开启 CPU 亲和性设置
 'task_worker_num' => 0, // 未来可调整为 4 开启异步任务处理
-'max_request' => 0,
+'max_request'           => 1000,
+'max_request_grace'     => 100, // （可选参数，防止所有 worker 同时重启，给一个波动的冗余量）
 'reload_async' => true,
 'max_wait_time' => 60,
 'enable_reuse_port' => false,
