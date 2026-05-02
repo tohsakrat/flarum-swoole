@@ -18,10 +18,10 @@ const SWOOLE_LISTEN_HOST = '/tmp/flarum.sock';
 const SWOOLE_WORKER_COUNT = 8;
 
 /** PHP 内存上限（峰值在清除缓存触发 LESS 编译时可达 ~1GB） */
-const PHP_MEMORY_LIMIT = '1536M';
+const PHP_MEMORY_LIMIT = '1024M';
 
 /** 单 Worker 内存水位（超过后平滑重启以清理堆碎片，单位：字节） */
-const WORKER_MEMORY_WATERMARK = 128 * 1024 * 1024; // 256 MB
+const WORKER_MEMORY_WATERMARK = 256 * 1024 * 1024; // 256 MB
 
 /** Worker 定时轮换间隔（防止长期运行内存碎片化，单位：小时） */
 const WORKER_RECYCLE_HOURS = 0.5;
@@ -37,6 +37,11 @@ const LSCACHE_ENABLED = true;
 
 /** 默认缓存 TTL（秒），Flarum 的 X-LiteSpeed-Cache-Control max-age 优先 */
 const LSCACHE_DEFAULT_TTL = 604800; // 7 天
+
+/** Early Hints 配置区 */
+const MANIFEST_PATH = __DIR__ . '/public/assets/rev-manifest.json';
+const CDN_PREFIX = '/;
+
 
 /**
  * WorkerCache: 进程级内存缓存，利用 Swoole worker 长驻特性。
@@ -953,6 +958,30 @@ if (isset($GLOBALS['swoole_session_redis_pool'])) {
 }
 
 $method = strtoupper($swooleReq->server['request_method'] ?? 'GET');
+$uri = $swooleReq->server['request_uri'] ?? '/';
+
+$isDoc = !str_contains($uri, '.') && !str_starts_with($uri, '/api') && !str_starts_with($uri, '/webmanifest') && $method === 'GET';
+
+if ($isDoc) {
+    $assets = getEarlyHintsAssets($uri);
+    if (!empty($assets)) {
+        $headerLinks = [];
+        foreach ($assets as $asset) {
+            $n = $asset[0];
+            $h = $asset[1];
+            $type = str_ends_with($n, '.js') ? 'script' : 'style';
+            $headerLinks[] = "Link: <" . CDN_PREFIX . "/assets/{$n}?v={$h}>; rel=preload; as={$type}";
+        }
+        
+        if (!empty($headerLinks)) {
+            $earlyHints = "HTTP/1.1 103 Early Hints\r\n" . implode("\r\n", $headerLinks) . "\r\n\r\n";
+            $server->send($swooleRes->fd, $earlyHints);
+            if (defined('LOG_LEVEL') && LOG_LEVEL === 'debug') {
+                error_log("[Debug] Early Hints sent for: {$uri}");
+            }
+        }
+    }
+}
 
 $isGuest = true;
 if (isset($swooleReq->header['authorization'])) {
@@ -1332,6 +1361,43 @@ $ip = $req->header['x-forwarded-for'] ?? $req->server['remote_addr'] ?? '-';
 $durationMs = number_format($durationSec * 1000, 2);
 $time = date('d/M/Y:H:i:s O');
 echo "[{$time}] [W#{$workerId}] {$ip} \"{$method} {$fullUri}\" {$statusCode} {$durationMs}ms\n";
+}
+
+$GLOBALS['early_hints_manifest'] = [];
+$GLOBALS['early_hints_mtime'] = 0;
+
+function getEarlyHintsAssets(string $url): array {
+    $manifestPath = MANIFEST_PATH;
+    if (file_exists($manifestPath)) {
+        $mtime = filemtime($manifestPath);
+        if ($mtime !== $GLOBALS['early_hints_mtime']) {
+            $content = file_get_contents($manifestPath);
+            $GLOBALS['early_hints_manifest'] = json_decode($content, true) ?: [];
+            $GLOBALS['early_hints_mtime'] = $mtime;
+        }
+    }
+    
+    $manifest = $GLOBALS['early_hints_manifest'];
+    if (empty($manifest)) return [];
+
+    $isAdmin = str_contains($url, 'admin');
+    $assets = [];
+    foreach ($manifest as $n => $h) {
+        if ($h === 'empty') continue;
+        if ($isAdmin ? str_contains($n, 'admin') : !str_contains($n, 'admin')) {
+            $assets[] = [$n, $h];
+        }
+    }
+    
+    usort($assets, function($a, $b) {
+        $aIsForum = str_contains($a[0], 'forum.js');
+        $bIsForum = str_contains($b[0], 'forum.js');
+        if ($aIsForum) return -1;
+        if ($bIsForum) return 1;
+        return 0;
+    });
+    
+    return $assets;
 }
 
 $server->on('start', function ($server) use ($host) {
