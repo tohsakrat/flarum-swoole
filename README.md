@@ -56,7 +56,7 @@ exec su -c 'cd /xxx/flarum && php flarum-swoole.php start'
 
 比真正的litespeed好一点是，在入口就去redis拿session，做颗粒度更细的缓存策略。
 
-~~做完才想起来都直接拿session了应该不再需要litespeed了，但是还没测试过~~
+~~做完才想起来都直接拿session了应该不再需要litespeed插件了，只是为了帖子界面级别的缓存控制增加一个中间件不划算。但是现在还需要它~~
 
 ~~没在没装fof/redis的环境下测试过，不能跑别来找我。~~
 
