@@ -68,12 +68,9 @@ co模式并发可以提升很多，无缓存长时间维持（一个小时以上
 关掉全部缓存机制，完整鉴权和序列化的纯动态请求。主机是gb5单核450分的netlab洋垃圾主机。
 
 ### co模式
-<img width="1103" height="169" alt="image" src="https://github.com/user-attachments/assets/81010c21-16f8-43a6-a046-e097c18240bd" />
+<img width="3731" height="392" alt="image" src="https://github.com/user-attachments/assets/15594e4c-9ed5-4934-8c64-be38a3aa2f70" />
 <img width="3816" height="480" alt="image" src="https://github.com/user-attachments/assets/27cfad1a-533a-4430-b690-b0c95450621f" />
 <img width="1223" height="173" alt="image" src="https://github.com/user-attachments/assets/ca49b3fa-af5f-4944-815e-1a8f81d4439c" />
-
-
-
 
 
 ## 总结
