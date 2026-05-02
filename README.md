@@ -201,6 +201,9 @@ co模式并发可以提升很多，无缓存长时间维持（一个小时以上
 <img width="3816" height="480" alt="image" src="https://github.com/user-attachments/assets/27cfad1a-533a-4430-b690-b0c95450621f" />
 <img width="1223" height="173" alt="image" src="https://github.com/user-attachments/assets/ca49b3fa-af5f-4944-815e-1a8f81d4439c" />
 
+# 已知的问题
+性能会随着时间和请求数量逐渐退化，并且只要被杀掉woker重启，就会一直退化。推测是内存碎片化的原因，但实际原因仍然没有验证。
+
 
 ## 总结
 co版本重写了Serializer依赖的api，并发执行序列化，合并能够合并的查询语句，可以一定程度缓解n+1问题，空闲基本可以跑到峰值的300ms。
