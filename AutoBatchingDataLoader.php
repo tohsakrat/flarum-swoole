@@ -289,11 +289,18 @@ class AutoBatchingDataLoader
         $parts = explode('?', $rewrittenQuery);
         $newQuery = "";
         $newBindings = [];
+        $fallbackToSequential = false;
 
         for ($i = 0; $i < count($parts) - 1; $i++) {
             if ($i === $diffIndex) {
+                $trimmedPart = rtrim($parts[$i]);
+                if (!str_ends_with($trimmedPart, '=')) {
+                    // 非等值条件（如 >、<、LIKE）不能转换成 IN (?,?)，必须降级单条执行
+                    $fallbackToSequential = true;
+                    break;
+                }
                 $placeholders = implode(',', array_fill(0, count($uniqueValues), '?'));
-                $trimmedPart = rtrim($parts[$i], ' =');
+                $trimmedPart = rtrim($trimmedPart, '=');
                 $newQuery .= $trimmedPart . " IN (" . $placeholders . ")";
                 foreach ($uniqueValues as $val) {
                     $newBindings[] = $val;
@@ -303,6 +310,21 @@ class AutoBatchingDataLoader
                 $newBindings[] = $firstBindings[$i] ?? null;
             }
         }
+        
+        if ($fallbackToSequential) {
+            foreach ($pending as $cid => $bindings) {
+                try {
+                    self::$batches[$batchKey]['results'][$cid] = $conn->nativeSelect($query, $bindings, $useReadPdo);
+                } catch (\Throwable $e) {
+                    self::$batches[$batchKey]['results'][$cid] = $e;
+                }
+                if ($cid !== $ownerCid && \Swoole\Coroutine::exists($cid)) {
+                    \Swoole\Coroutine::resume($cid);
+                }
+            }
+            return;
+        }
+
         $newQuery .= end($parts);
 
         try {
