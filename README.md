@@ -195,7 +195,7 @@ return [
 两种模式都可以无缓存长时间维持（一个小时以上）rps20+cpu100%不被打崩（对于flarum这种重cpu应用来说这已经很不容易了），并且内存占用非常少（加os、mysql、redis、meilisearch等不到2g）。
 
 ## 压测
-关掉全部缓存机制，完整鉴权和序列化的纯动态请求。主机是虽Platinum 8272CL但gb5单核450分的[netlab超兽洋垃圾](https://browser.geekbench.com/v5/cpu/24274234)（太乐子了必须分享一下，~~不要买netlab上游~~）主机，除了线路海星~~但是大小包~~一无是处。
+关掉全部缓存机制，完整鉴权和序列化的纯动态请求。主机是虽Platinum 8272CL但gb5单核450分的[netlab超兽洋垃圾](https://browser.geekbench.com/v5/cpu/24274234)（太乐子了必须分享一下，~~不要买netlab上游~~）主机，除了线路海星~~但是大小包还禁udp~~一无是处。
 ### woker模式
 <img width="3651" height="433" alt="image" src="https://github.com/user-attachments/assets/6e255a2e-8824-4e8a-bf7b-a08ad14b2d3a" />
 <img width="3729" height="439" alt="image" src="https://github.com/user-attachments/assets/19063cff-add2-4179-ae0e-27e036d716bf" />
