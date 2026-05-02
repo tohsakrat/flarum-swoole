@@ -27,7 +27,7 @@ php flarum-swoole.php start
 
 推荐supervisor环境运行，启动脚本教考：
 
-```
+```bash
 #!/bin/bash
 
 # 1. 无差别强杀残留进程和 Socket 占用
@@ -62,12 +62,139 @@ exec su -c 'cd /xxx/flarum && php flarum-swoole.php start'
 
 lsphp和swoole互斥，不为了lsphp的性能提升，没必要专门为了缓存把网关换成litespeed，毕竟免费版open litespeed网关限制是真多。
 
+# 权限组静态化
+
+找自己的插件入口文件写进去，不会用就不要用。
+```php
+use Flarum\User\Access\Gate;
+use Flarum\User\Event\Saving;
+use Flarum\User\User;
+
+class SwooleMemoryGate extends Gate
+{
+
+    // 全局静态变量，在 Swoole Worker 内存中常驻
+    public static $permissionsMap = null;
+    public function allows(User $actor, string $ability, $model): bool
+    {
+        // ── 优化1：Policy 查找结果按 model 类名缓存 ──
+        // 缓存的是「哪些 Policy 对象负责哪个 Model」，与用户/权限组无关，worker 级只读安全
+        static $policyCache = [];
+        $cacheKey = $model
+            ? (is_string($model) ? $model : get_class($model))
+            : '__global__';
+        if (!array_key_exists($cacheKey, $policyCache)) {
+            if ($model) {
+                $classes = is_string($model)
+                    ? [$model]
+                    : array_merge(class_parents($model), [get_class($model)]);
+                $policies = [];
+                foreach ($classes as $class) {
+                    $policies = array_merge($policies, $this->getPolicies($class));
+                }
+            } else {
+                $policies = $this->getPolicies(\Flarum\User\Access\AbstractPolicy::GLOBAL);
+            }
+            $policyCache[$cacheKey] = $policies;
+        }
+        $appliedPolicies = $policyCache[$cacheKey];
+        // 执行所有适用的 Policy
+        $results = [];
+        foreach ($appliedPolicies as $policy) {
+            $results[] = $policy->checkAbility($actor, $ability, $model);
+        }
+        // ── 优化2：$results 为空（大多数普通权限路径）时跳过 criteria 循环 ──
+        if (!empty($results)) {
+            foreach (static::EVALUATION_CRITERIA_PRIORITY as $criteria => $decision) {
+                if (in_array($criteria, $results, true)) {
+                    return $decision;
+                }
+            }
+        }
+        // === 核心优化：拦截数据库查询，改为纯内存匹配 ===
+        if ($actor->isAdmin()) {
+            return true;
+        }
+        // 静态闭包：整个 Worker 生命周期只绑定一次
+        static $getPermissionsProp = null;
+        static $getGroupIds = null;
+        static $setPermissionsProp = null;
+        if ($getPermissionsProp === null) {
+            $getPermissionsProp = \Closure::bind(
+                function ($a) { return $a->permissions; },
+                null, User::class
+            );
+            $getGroupIds = \Closure::bind(function ($a) {
+                $ids = [\Flarum\Group\Group::GUEST_ID];
+                if ($a->is_email_confirmed) {
+                    $ids = array_merge($ids, [\Flarum\Group\Group::MEMBER_ID], $a->groups->pluck('id')->all());
+                }
+                foreach (static::$groupProcessors as $processor) {
+                    $ids = $processor($a, $ids);
+                }
+                return $ids;
+            }, null, User::class);
+            $setPermissionsProp = \Closure::bind(
+                function ($a, $perms) { $a->permissions = $perms; },
+                null, User::class
+            );
+        }
+        // 仅在当前请求的 actor 实例首次到达时计算，后续 allows() 直接走 hasPermission()
+        if (is_null($getPermissionsProp($actor))) {
+            // $permissionsMap 已由 workerStart 预加载
+            // 极端情况下 fallback
+            if (self::$permissionsMap === null) {
+                $map = [];
+                foreach (\Flarum\Group\Permission::get() as $p) {
+                    $map[$p->group_id][] = $p->permission;
+                }
+                self::$permissionsMap = $map;
+            }
+            $groupIds = $getGroupIds($actor);
+            $actorPermissions = [];
+            foreach ($groupIds as $gId) {
+                if (isset(self::$permissionsMap[$gId])) {
+                    foreach (self::$permissionsMap[$gId] as $perm) {
+                        $actorPermissions[] = $perm;
+                    }
+                }
+            }
+            $setPermissionsProp($actor, array_unique($actorPermissions));
+        }
+        return $actor->hasPermission($ability);
+    }
+}
+
+// 2. 编写一个服务提供者，用于替换系统默认的 Gate
+class SwoolePermissionOptimizationProvider extends AbstractServiceProvider
+{
+    public function boot()
+    {
+        // 覆盖 Flarum 的 Gate 实例
+        User::setGate($this->container->makeWith(SwooleMemoryGate::class, [
+            'policyClasses' => $this->container->make('flarum.policies')
+        ]));
+    }
+}
+return [
+      
+     (new Extend\ServiceProvider())
+        ->register(SwoolePermissionOptimizationProvider::class),
+        ………………
+```
+
+
+
 # 效果和局限性
 峰值性能提升不算大，相比优化得很好的fpm/lsphp+jit+opcache提升也就100毫秒左右500->400ms,如果再手动解决一下合并不了的n+1查询还能再快50ms。
 co模式并发可以提升很多，无缓存长时间维持（一个小时以上）rps15+cpu100%不被打崩（对于flarum这种重cpu应用来说这已经很不容易了），并且内存占用非常少。
 
 ## 压测
 关掉全部缓存机制，完整鉴权和序列化的纯动态请求。主机是gb5单核450分的netlab洋垃圾主机。
+### woker模式
+<img width="3687" height="444" alt="image" src="https://github.com/user-attachments/assets/26064f92-8089-4888-8dd4-7cd3f05000e8" />
+<img width="3644" height="472" alt="image" src="https://github.com/user-attachments/assets/8d583bcf-c6f9-4625-bbab-a453fb5cac59" />
+<img width="1231" height="210" alt="image" src="https://github.com/user-attachments/assets/7b82c3e6-3b71-4695-ba1b-fe9f5feec240" />
 
 ### co模式
 <img width="3731" height="392" alt="image" src="https://github.com/user-attachments/assets/15594e4c-9ed5-4934-8c64-be38a3aa2f70" />
@@ -82,9 +209,13 @@ co版本重写了Serializer依赖的api，并发执行序列化，合并能够�
 
 而co模式相比woker模式本身有隔离作用域和各种反射的额外开销，所以具体用哪种模式还要根据实际情况。
 
+压测中woker模式的表现甚至还要略好一些，明明co模式要难得多，一顿操作猛如虎，郁闷…
+
+但其实这两者压测表现差不多就说明co模式更好，因为我本来就通过extend优化了大量n+1查询，并且像co对于不想费这个力气的玩家肯定是co模式胜。
+
 总的来说即使很大程度上解决了序列化过程中的n+1问题，但是不论用哪种模式，不缓存的话真正的瓶颈始终在cpu。
 
-视图层计算过重难以避免，所以有条件还是要上amd的u，
+视图层计算过重难以避免，所以有条件还是要上amd的u。
 
 
 一个验证可行的优化思路是：
